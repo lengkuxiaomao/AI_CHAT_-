@@ -32,11 +32,9 @@ const toolsImplementation: Record<string, Function> = {
 
 export class StockAgent {
   private ai: GoogleGenAI;
-  // Switching to Flash prevents 429 errors more effectively for this demo, 
-  // while still being capable of tool use.
-  // If strict reasoning is needed, we can revert to 'gemini-3-pro-preview' 
-  // but Flash is safer for quota.
-  private modelName = 'gemini-3-flash-preview'; 
+  // Use stable Gemini 2.0 Flash.
+  // It offers high rate limits and low latency, making it ideal for free-tier usage.
+  private modelName = 'gemini-2.0-flash'; 
   private history: Content[] = [];
 
   constructor() {
@@ -251,6 +249,8 @@ export class StockAgent {
           errorMessage = "API 请求过于频繁（429）。目前使用的是免费配额，请稍后重试。";
         } else if (error.message && error.message.includes('quota')) {
           errorMessage = "API 配额已耗尽。请检查您的 Google AI Studio 账单设置或稍后重试。";
+        } else if (error.status === 404 || (error.message && error.message.includes('404'))) {
+          errorMessage = "找不到指定的模型。请联系开发者更新模型配置。";
         }
 
         newMessages.push({

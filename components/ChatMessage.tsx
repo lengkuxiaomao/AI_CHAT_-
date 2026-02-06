@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useLayoutEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Message, Role } from '../types';
 import StockChart from './StockChart';
@@ -34,6 +34,14 @@ const ChatMessage = forwardRef<ChatMessageRef, ChatMessageProps>(({ message, onC
     getCurrentContent: () => contentRef.current
   }));
   
+  // Use useLayoutEffect to notify parent of height change BEFORE browser paint
+  // This prevents the flickering "jump" effect when scrolling to bottom
+  useLayoutEffect(() => {
+    if (onContentUpdate && message.shouldAnimate) {
+      onContentUpdate();
+    }
+  }, [displayedContent, onContentUpdate, message.shouldAnimate]);
+  
   const animationRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -65,10 +73,7 @@ const ChatMessage = forwardRef<ChatMessageRef, ChatMessageProps>(({ message, onC
       const nextContent = fullText.slice(0, currentIndex);
       setDisplayedContent(nextContent);
       
-      // Notify parent to handle scroll intelligently
-      if (onContentUpdate) {
-        onContentUpdate();
-      }
+      // NOTE: onContentUpdate call moved to useLayoutEffect above
 
       if (currentIndex >= fullText.length) {
         if (animationRef.current) {
@@ -84,7 +89,7 @@ const ChatMessage = forwardRef<ChatMessageRef, ChatMessageProps>(({ message, onC
     return () => {
       if (animationRef.current) clearInterval(animationRef.current);
     };
-  }, [message.content, message.shouldAnimate, onContentUpdate, onAnimationComplete]);
+  }, [message.content, message.shouldAnimate, onAnimationComplete]);
 
   return (
     <div className={`flex w-full mb-6 ${isUser ? 'justify-end' : 'justify-start'}`}>

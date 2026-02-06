@@ -112,10 +112,14 @@ const App: React.FC = () => {
 
   const scrollToBottom = (instant = false) => {
     if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({
-        top: scrollContainerRef.current.scrollHeight,
-        behavior: instant ? 'instant' : 'smooth'
-      });
+      if (instant) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      } else {
+        scrollContainerRef.current.scrollTo({
+          top: scrollContainerRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
       shouldAutoScrollRef.current = true;
     }
   };
@@ -123,10 +127,9 @@ const App: React.FC = () => {
   // Smart scroll used by typewriter effect
   const handleSmartScroll = useCallback(() => {
     if (shouldAutoScrollRef.current && scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({
-        top: scrollContainerRef.current.scrollHeight,
-        behavior: 'instant' // Instant is better for typing to avoid lag
-      });
+      // Direct assignment of scrollTop is more synchronous/instant than scrollTo({behavior: 'instant'})
+      // which helps prevent flickering when content expands rapidly.
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
     }
   }, []);
 
@@ -392,7 +395,7 @@ const App: React.FC = () => {
               <h1 className="text-lg font-bold tracking-tight text-white md:hidden">股市助手</h1>
               <p className="text-xs text-slate-400 flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Gemini 3.0 Pro
+                Gemini 2.0 Flash
               </p>
             </div>
           </div>

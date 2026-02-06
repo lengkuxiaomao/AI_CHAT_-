@@ -1,5 +1,5 @@
 {
   "name": "Gemini 股市智能体",
-  "description": "由 Gemini 3.0 驱动的智能金融代理。它分析股市趋势，执行工具以获取实时市场数据，并使用基于图表的工作流可视化结果。",
+  "description": "由 Gemini 2.0 Flash 驱动的智能金融代理。它分析股市趋势，执行工具以获取实时市场数据，并使用基于图表的工作流可视化结果。",
   "requestFramePermissions": []
 }
