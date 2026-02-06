@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Message, Role, ChatSession } from './types';
 import { StockAgent } from './services/agent';
-import ChatMessage from './components/ChatMessage';
+import ChatMessage, { ChatMessageRef } from './components/ChatMessage';
 import { Send, Activity, Sparkles, TrendingUp, Menu, Plus, MessageSquare, Trash2, X, Square } from 'lucide-react';
 
 const agent = new StockAgent();
@@ -10,7 +10,8 @@ const statusMap: Record<string, string> = {
   idle: '空闲',
   thinking: '思考中',
   analyzing_tool_data: '分析数据中',
-  executing_tool: '获取数据中'
+  executing_tool: '获取数据中',
+  typing: '输出中'
 };
 
 const STORAGE_KEY = 'gemini_stock_agent_sessions';
@@ -24,10 +25,14 @@ const App: React.FC = () => {
   // Chat State
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
-  const [status, setStatus] = useState<'idle' | 'thinking' | 'analyzing_tool_data' | 'executing_tool'>('idle');
+  const [status, setStatus] = useState<'idle' | 'thinking' | 'analyzing_tool_data' | 'executing_tool' | 'typing'>('idle');
   
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // Ref to the currently typing message component to access partial content on stop
+  const activeMessageRef = useRef<ChatMessageRef | null>(null);
 
   // Load sessions from local storage on mount
   useEffect(() => {
@@ -54,7 +59,16 @@ const App: React.FC = () => {
   // Save sessions whenever they change
   useEffect(() => {
     if (sessions.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+      // Ensure we don't save the 'shouldAnimate' state to localStorage, 
+      // so when we reload, text appears instantly.
+      const sessionsToSave = sessions.map(s => ({
+        ...s,
+        messages: s.messages.map(m => {
+          const { shouldAnimate, ...rest } = m;
+          return rest as Message;
+        })
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionsToSave));
     }
   }, [sessions]);
 
@@ -83,13 +97,49 @@ const App: React.FC = () => {
     }));
   }, [messages, currentSessionId]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  // Handle Scroll Event to detect if user is at bottom
+  const handleScroll = () => {
+    if (!scrollContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+    
+    // Check if user is near the bottom.
+    // We use a small threshold (10px) to allow the user to easily scroll up and disable auto-scroll.
+    // If the threshold is too large (e.g. 50px), the user has to scroll significantly to "break free",
+    // which feels like the scrollbar is fighting them.
+    const isAtBottom = scrollHeight - scrollTop - clientHeight <= 10;
+    shouldAutoScrollRef.current = isAtBottom;
   };
 
+  const scrollToBottom = (instant = false) => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior: instant ? 'instant' : 'smooth'
+      });
+      shouldAutoScrollRef.current = true;
+    }
+  };
+
+  // Smart scroll used by typewriter effect
+  const handleSmartScroll = useCallback(() => {
+    if (shouldAutoScrollRef.current && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior: 'instant' // Instant is better for typing to avoid lag
+      });
+    }
+  }, []);
+
+  // Force scroll when messages change (e.g., new message added)
+  // But strictly rely on shouldAutoScroll logic unless it's a brand new message from user
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, status]);
+     // If a new message just arrived (list length changed), and it's the start of generation,
+     // we typically want to snap to bottom.
+     // However, to keep it simple: if autoScroll was on, keep it on.
+     if (shouldAutoScrollRef.current) {
+        scrollToBottom();
+     }
+  }, [messages.length, status]);
 
   const startNewSession = () => {
     // Abort current generation if any when switching sessions
@@ -103,7 +153,8 @@ const App: React.FC = () => {
     const welcomeMsg: Message = {
       id: 'welcome',
       role: Role.MODEL,
-      content: "你好！我是你的金融智能助手。我可以分析股市、可视化趋势并提供专业见解。试着问我“苹果股价”或“对比特斯拉和福特”。"
+      content: "你好！我是你的金融智能助手。我可以分析股市、可视化趋势并提供专业见解。试着问我“苹果股价”或“对比特斯拉和福特”。",
+      shouldAnimate: false // Welcome message is instant
     };
     
     const newSession: ChatSession = {
@@ -118,7 +169,9 @@ const App: React.FC = () => {
     setCurrentSessionId(newId);
     setMessages([welcomeMsg]);
     agent.reset();
-    setShowSidebar(false); // Close sidebar on mobile after selection
+    setShowSidebar(false); 
+    // Wait for render then scroll
+    setTimeout(() => scrollToBottom(true), 0);
   };
 
   const loadSession = (session: ChatSession) => {
@@ -130,17 +183,25 @@ const App: React.FC = () => {
     }
 
     setCurrentSessionId(session.id);
-    setMessages(session.messages);
-    agent.setHistory(session.messages);
+    
+    // When loading history, ensure no animation
+    const historyMessages = session.messages.map(m => ({
+      ...m,
+      shouldAnimate: false
+    }));
+
+    setMessages(historyMessages);
+    agent.setHistory(historyMessages);
     setShowSidebar(false);
+    setTimeout(() => scrollToBottom(true), 0);
   };
 
   const deleteSession = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
     const newSessions = sessions.filter(s => s.id !== sessionId);
     setSessions(newSessions);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newSessions));
-
+    // LocalStorage update handled by useEffect
+    
     if (currentSessionId === sessionId) {
       if (newSessions.length > 0) {
         loadSession(newSessions[0]);
@@ -152,11 +213,36 @@ const App: React.FC = () => {
 
   const handleStop = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (abortControllerRef.current) {
+    if (status === 'typing') {
+      // User cancelled during animation: TRUNCATE content to what is currently visible
+      if (activeMessageRef.current) {
+        const currentContent = activeMessageRef.current.getCurrentContent();
+        setMessages(prev => {
+          const newMessages = [...prev];
+          const lastIndex = newMessages.length - 1;
+          if (lastIndex >= 0) {
+            newMessages[lastIndex] = {
+              ...newMessages[lastIndex],
+              content: currentContent + " ... (已停止)", // Update content to partial text
+              shouldAnimate: false // Stop animation
+            };
+          }
+          return newMessages;
+        });
+      }
+      setStatus('idle');
+    } else if (abortControllerRef.current) {
+      // User cancelled during network request/thinking
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
+      setStatus('idle');
     }
   };
+
+  const handleAnimationComplete = useCallback(() => {
+    // Transition from typing to idle
+    setStatus((prev) => prev === 'typing' ? 'idle' : prev);
+  }, []);
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -169,6 +255,9 @@ const App: React.FC = () => {
     const userMsg: Message = { id: Date.now().toString(), role: Role.USER, content: userText };
     setMessages(prev => [...prev, userMsg]);
     setStatus('thinking');
+    
+    // User sent a message, force scroll to bottom and enable auto-scroll
+    setTimeout(() => scrollToBottom(), 0);
 
     // Setup AbortController
     const controller = new AbortController();
@@ -183,19 +272,32 @@ const App: React.FC = () => {
       );
       
       setMessages(prev => [...prev, ...agentResponses]);
+
+      // Determine if we are entering 'typing' mode for the last message
+      const lastMsg = agentResponses[agentResponses.length - 1];
+      if (lastMsg && lastMsg.shouldAnimate) {
+        setStatus('typing');
+      } else {
+        setStatus('idle');
+      }
+
     } catch (error: any) {
       if (error.name === 'AbortError') {
-         // Handle manual stop
+         // Handle manual stop (during fetch)
          setMessages(prev => [...prev, {
             id: Date.now().toString(),
             role: Role.MODEL,
-            content: "🚫 *已停止生成*"
+            content: "🚫 *已停止生成*",
+            shouldAnimate: false
          }]);
+         setStatus('idle');
       } else {
          console.error("Failed to run agent", error);
+         setStatus('idle');
       }
     } finally {
-      setStatus('idle');
+      // Clean up controller, but DO NOT unconditionally set status to idle 
+      // because we might be in 'typing' state which needs to persist until animation completes.
       abortControllerRef.current = null;
     }
   };
@@ -310,12 +412,25 @@ const App: React.FC = () => {
         </header>
 
         {/* Chat Area */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 container mx-auto max-w-4xl w-full">
+        <main 
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto p-4 md:p-6 container mx-auto max-w-4xl w-full"
+        >
           <div className="space-y-2 pb-4">
-            {messages.map((msg) => (
-              <ChatMessage key={msg.id} message={msg} />
+            {messages.map((msg, idx) => (
+              <ChatMessage 
+                key={msg.id} 
+                message={msg}
+                // Pass ref to the last message if it's the one currently typing
+                ref={idx === messages.length - 1 && status === 'typing' ? activeMessageRef : null}
+                onContentUpdate={handleSmartScroll}
+                // Only track completion for the last message to reset status
+                onAnimationComplete={idx === messages.length - 1 ? handleAnimationComplete : undefined}
+              />
             ))}
-            {status !== 'idle' && (
+            {/* Show "Processing" indicator only if not yet typing. Once typing, the text itself is the indicator. */}
+            {status !== 'idle' && status !== 'typing' && (
                <div className="flex justify-start w-full mb-6">
                  <div className="flex items-center gap-2 ml-14 text-slate-500 text-sm italic">
                     <Sparkles size={16} className="animate-spin-slow" />
@@ -323,7 +438,6 @@ const App: React.FC = () => {
                  </div>
                </div>
             )}
-            <div ref={messagesEndRef} />
           </div>
         </main>
 

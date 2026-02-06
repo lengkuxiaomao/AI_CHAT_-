@@ -21,6 +21,8 @@ export interface Message {
   id: string;
   role: Role;
   content: string;
+  // Controls whether the message should render with a typewriter effect
+  shouldAnimate?: boolean;
   // Optional structured data for rendering widgets (like charts)
   stockData?: StockToolResult[]; 
   // For showing agent thought process

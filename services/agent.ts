@@ -222,7 +222,8 @@ export class StockAgent {
                id: Date.now().toString() + '-tool',
                role: Role.TOOL,
                content: `已获取 ${toolResultsForUI.map(t => t.symbol).join(', ')} 的数据`,
-               stockData: toolResultsForUI // Pass all results for comparison
+               stockData: toolResultsForUI, // Pass all results for comparison
+               shouldAnimate: false // Tool messages are usually just updates, no need to type
              });
            }
 
@@ -232,7 +233,8 @@ export class StockAgent {
           newMessages.push({
             id: Date.now().toString(),
             role: Role.MODEL,
-            content: textParts || "我已处理该请求。"
+            content: textParts || "我已处理该请求。",
+            shouldAnimate: true // Enable typewriter effect for the final answer
           });
         }
 
@@ -254,7 +256,8 @@ export class StockAgent {
         newMessages.push({
           id: Date.now().toString(),
           role: Role.MODEL,
-          content: errorMessage
+          content: errorMessage,
+          shouldAnimate: true
         });
       }
     }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Message, Role } from '../types';
 import StockChart from './StockChart';
@@ -6,12 +6,85 @@ import { Bot, User, Cpu } from 'lucide-react';
 
 interface ChatMessageProps {
   message: Message;
+  onContentUpdate?: () => void;
+  onAnimationComplete?: () => void;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
+export interface ChatMessageRef {
+  getCurrentContent: () => string;
+}
+
+const ChatMessage = forwardRef<ChatMessageRef, ChatMessageProps>(({ message, onContentUpdate, onAnimationComplete }, ref) => {
   const isUser = message.role === Role.USER;
   const isTool = message.role === Role.TOOL;
   const hasChart = message.stockData && message.stockData.length > 0;
+  
+  const [displayedContent, setDisplayedContent] = useState(
+    message.shouldAnimate ? '' : message.content
+  );
+  
+  // Ref to track displayed content for imperative handle access without re-rendering handle
+  const contentRef = useRef(displayedContent);
+
+  useEffect(() => {
+    contentRef.current = displayedContent;
+  }, [displayedContent]);
+
+  useImperativeHandle(ref, () => ({
+    getCurrentContent: () => contentRef.current
+  }));
+  
+  const animationRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // If we shouldn't animate, or if we've already displayed everything (and component re-rendered)
+    // just set the content directly.
+    if (!message.shouldAnimate) {
+      setDisplayedContent(message.content);
+      // If animation was skipped, ensure we notify completion immediately if needed,
+      // but usually this runs on mount/update so we might not want to trigger side effects unconditionally.
+      // For now, parent handles the 'idle' state fallback if shouldAnimate starts as false.
+      return;
+    }
+
+    // Reset if content changes completely (though ids usually unique)
+    if (displayedContent === message.content) {
+      if (onAnimationComplete) onAnimationComplete();
+      return;
+    }
+
+    let currentIndex = 0;
+    const fullText = message.content;
+    const speed = 20; // ms per char
+
+    // Clear any existing interval
+    if (animationRef.current) clearInterval(animationRef.current);
+
+    animationRef.current = window.setInterval(() => {
+      currentIndex++;
+      const nextContent = fullText.slice(0, currentIndex);
+      setDisplayedContent(nextContent);
+      
+      // Notify parent to handle scroll intelligently
+      if (onContentUpdate) {
+        onContentUpdate();
+      }
+
+      if (currentIndex >= fullText.length) {
+        if (animationRef.current) {
+           clearInterval(animationRef.current);
+           animationRef.current = null;
+        }
+        if (onAnimationComplete) {
+          onAnimationComplete();
+        }
+      }
+    }, speed);
+
+    return () => {
+      if (animationRef.current) clearInterval(animationRef.current);
+    };
+  }, [message.content, message.shouldAnimate, onContentUpdate, onAnimationComplete]);
 
   return (
     <div className={`flex w-full mb-6 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -67,14 +140,16 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                   a: ({node, ...props}) => <a className="text-blue-300 hover:underline" target="_blank" rel="noopener noreferrer" {...props} />,
                 }}
               >
-                {message.content}
+                {displayedContent}
               </ReactMarkdown>
             </div>
           </div>
 
           {/* Render Stock Chart if data exists */}
           {hasChart && (
-            <div className="w-full mt-2 animate-fade-in-up">
+            <div className={`w-full mt-2 transition-opacity duration-700 ${
+              displayedContent.length === message.content.length ? 'opacity-100' : 'opacity-0'
+            }`}>
               <StockChart data={message.stockData!} />
             </div>
           )}
@@ -82,6 +157,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
       </div>
     </div>
   );
-};
+});
 
 export default ChatMessage;
