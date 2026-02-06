@@ -46,6 +46,30 @@ export class StockAgent {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
   }
 
+  /**
+   * Clears the current conversation history.
+   */
+  reset() {
+    this.history = [];
+  }
+
+  /**
+   * Restores conversation history from UI messages.
+   * We approximate the API Content structure from the UI Message structure.
+   */
+  setHistory(messages: Message[]) {
+    this.history = messages
+      .filter(m => m.role !== Role.TOOL) // Skip tool UI messages for direct API history context to simplify
+      .map(m => {
+        if (m.role === Role.USER) {
+          return { role: 'user', parts: [{ text: m.content }] };
+        } else {
+          // Model role
+          return { role: 'model', parts: [{ text: m.content }] };
+        }
+      });
+  }
+
   private async delay(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }

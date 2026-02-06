@@ -35,3 +35,11 @@ export interface AgentState {
   messages: Message[];
   status: 'idle' | 'thinking' | 'executing_tool' | 'streaming';
 }
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: number;
+  updatedAt: number;
+}
