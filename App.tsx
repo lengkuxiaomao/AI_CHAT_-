@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Message, Role, ChatSession } from './types';
 import { StockAgent } from './services/agent';
 import ChatMessage from './components/ChatMessage';
-import { Send, Activity, Sparkles, TrendingUp, Menu, Plus, MessageSquare, Trash2, X } from 'lucide-react';
+import { Send, Activity, Sparkles, TrendingUp, Menu, Plus, MessageSquare, Trash2, X, Square } from 'lucide-react';
 
 const agent = new StockAgent();
 
@@ -27,6 +27,7 @@ const App: React.FC = () => {
   const [status, setStatus] = useState<'idle' | 'thinking' | 'analyzing_tool_data' | 'executing_tool'>('idle');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Load sessions from local storage on mount
   useEffect(() => {
@@ -91,6 +92,13 @@ const App: React.FC = () => {
   }, [messages, status]);
 
   const startNewSession = () => {
+    // Abort current generation if any when switching sessions
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setStatus('idle');
+    }
+
     const newId = Date.now().toString();
     const welcomeMsg: Message = {
       id: 'welcome',
@@ -114,6 +122,13 @@ const App: React.FC = () => {
   };
 
   const loadSession = (session: ChatSession) => {
+    // Abort current generation if any when switching sessions
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setStatus('idle');
+    }
+
     setCurrentSessionId(session.id);
     setMessages(session.messages);
     agent.setHistory(session.messages);
@@ -135,6 +150,14 @@ const App: React.FC = () => {
     }
   };
 
+  const handleStop = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  };
+
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!inputValue.trim() || status !== 'idle') return;
@@ -147,17 +170,33 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, userMsg]);
     setStatus('thinking');
 
+    // Setup AbortController
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
-      // Run the Agent Loop
-      const agentResponses = await agent.runConversation(userText, (newStatus) => {
-        setStatus(newStatus as any);
-      });
+      // Run the Agent Loop with AbortSignal
+      const agentResponses = await agent.runConversation(
+        userText, 
+        (newStatus) => setStatus(newStatus as any),
+        controller.signal
+      );
       
       setMessages(prev => [...prev, ...agentResponses]);
-    } catch (error) {
-      console.error("Failed to run agent", error);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+         // Handle manual stop
+         setMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            role: Role.MODEL,
+            content: "🚫 *已停止生成*"
+         }]);
+      } else {
+         console.error("Failed to run agent", error);
+      }
     } finally {
       setStatus('idle');
+      abortControllerRef.current = null;
     }
   };
 
@@ -300,13 +339,23 @@ const App: React.FC = () => {
                 className="w-full bg-slate-950 text-slate-100 border border-slate-700 rounded-xl pl-5 pr-14 py-4 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all placeholder:text-slate-600 shadow-inner"
                 disabled={status !== 'idle'}
               />
-              <button
-                type="submit"
-                disabled={!inputValue.trim() || status !== 'idle'}
-                className="absolute right-2 p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-900/20"
-              >
-                <Send size={20} />
-              </button>
+              {status === 'idle' ? (
+                <button
+                  type="submit"
+                  disabled={!inputValue.trim()}
+                  className="absolute right-2 p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-900/20"
+                >
+                  <Send size={20} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="absolute right-2 p-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors shadow-lg shadow-rose-900/20 animate-pulse"
+                >
+                  <Square size={20} fill="currentColor" />
+                </button>
+              )}
             </form>
             <div className="text-center mt-2">
               <p className="text-[10px] text-slate-500">

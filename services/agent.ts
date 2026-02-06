@@ -122,7 +122,8 @@ export class StockAgent {
    */
   async runConversation(
     userMessage: string, 
-    onStatusUpdate: (status: string) => void
+    onStatusUpdate: (status: string) => void,
+    signal?: AbortSignal
   ): Promise<Message[]> {
     const newMessages: Message[] = [];
     
@@ -136,7 +137,11 @@ export class StockAgent {
     let iteration = 0;
     const MAX_ITERATIONS = 5; // Prevent infinite loops
 
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
     while (!turnComplete && iteration < MAX_ITERATIONS) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
       iteration++;
       onStatusUpdate(iteration === 1 ? 'thinking' : 'analyzing_tool_data');
 
@@ -152,6 +157,8 @@ export class StockAgent {
           保持回答简洁、专业且有见地。
           请始终使用中文回复。`
         );
+
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
         const responseContent = result.candidates?.[0]?.content;
         
@@ -173,6 +180,8 @@ export class StockAgent {
 
            // Execute all requested tools
            for (const call of toolCalls) {
+             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
              const fc = call.functionCall;
              if (!fc) continue;
 
@@ -228,6 +237,9 @@ export class StockAgent {
         }
 
       } catch (error: any) {
+        // Rethrow AbortError to be handled by the caller (App.tsx)
+        if (error.name === 'AbortError') throw error;
+
         console.error("Agent Error:", error);
         turnComplete = true;
         
