@@ -32,9 +32,12 @@ const toolsImplementation: Record<string, Function> = {
 
 export class StockAgent {
   private ai: GoogleGenAI;
-  // Use stable Gemini 2.0 Flash.
-  // It offers high rate limits and low latency, making it ideal for free-tier usage.
-  private modelName = 'gemini-2.0-flash'; 
+  
+  // Model Priority List:
+  // 1. gemini-2.0-flash: Newest, fastest, high limits.
+  // 2. gemini-1.5-flash: Reliable fallback, usually has a separate quota bucket in free tier.
+  private models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  
   private history: Content[] = [];
 
   constructor() {
@@ -53,16 +56,14 @@ export class StockAgent {
 
   /**
    * Restores conversation history from UI messages.
-   * We approximate the API Content structure from the UI Message structure.
    */
   setHistory(messages: Message[]) {
     this.history = messages
-      .filter(m => m.role !== Role.TOOL) // Skip tool UI messages for direct API history context to simplify
+      .filter(m => m.role !== Role.TOOL)
       .map(m => {
         if (m.role === Role.USER) {
           return { role: 'user', parts: [{ text: m.content }] };
         } else {
-          // Model role
           return { role: 'model', parts: [{ text: m.content }] };
         }
       });
@@ -73,50 +74,60 @@ export class StockAgent {
   }
 
   /**
-   * Wraps generateContent with exponential backoff for 429 errors
+   * Tries to generate content using models in priority order.
+   * If a model hits a rate limit (429) or overload (503), it falls back to the next model.
    */
-  private async generateContentWithRetry(
+  private async generateContentWithFallback(
     contents: Content[], 
     tools: any[], 
-    systemInstruction: string,
-    attempt = 1
-  ): Promise<GenerateContentResponse> {
-    const MAX_RETRIES = 3;
-    const BASE_DELAY = 2000;
+    systemInstruction: string
+  ): Promise<{ response: GenerateContentResponse, modelUsed: string }> {
+    
+    let lastError: any = null;
 
-    try {
-      return await this.ai.models.generateContent({
-        model: this.modelName,
-        contents: contents,
-        config: {
-          tools: tools,
-          systemInstruction: systemInstruction,
+    for (const model of this.models) {
+      try {
+        // console.log(`[Agent] Attempting with model: ${model}`);
+        const result = await this.ai.models.generateContent({
+          model: model,
+          contents: contents,
+          config: {
+            tools: tools,
+            systemInstruction: systemInstruction,
+          }
+        });
+        
+        return { response: result, modelUsed: model };
+
+      } catch (error: any) {
+        lastError = error;
+        
+        // Analyze if error is related to quota or capacity
+        const isRateLimit = error.status === 429 || 
+                            error.code === 429 || 
+                            (error.message && error.message.includes('429')) ||
+                            (error.message && error.message.includes('quota'));
+        
+        const isOverloaded = error.status === 503 || 
+                             (error.message && error.message.includes('503'));
+
+        // If it's a capacity issue and we have more models to try, continue loop
+        if ((isRateLimit || isOverloaded) && model !== this.models[this.models.length - 1]) {
+          console.warn(`[Agent] Model ${model} failed (Quota/Load). Switching to fallback...`);
+          await this.delay(1000); // Small cool-down before switching
+          continue; 
         }
-      });
-    } catch (error: any) {
-      // Check for 429 (Resource Exhausted)
-      // The error object structure might vary, checking code and status
-      const isRateLimit = error.status === 429 || 
-                          error.code === 429 || 
-                          (error.message && error.message.includes('429')) ||
-                          (error.message && error.message.includes('quota'));
 
-      if (isRateLimit && attempt <= MAX_RETRIES) {
-        const delayTime = BASE_DELAY * Math.pow(2, attempt - 1);
-        console.warn(`[Agent] Rate limit hit (429). Retrying in ${delayTime}ms... (Attempt ${attempt}/${MAX_RETRIES})`);
-        await this.delay(delayTime);
-        return this.generateContentWithRetry(contents, tools, systemInstruction, attempt + 1);
+        // Otherwise throw the error (e.g. invalid request, or all models exhausted)
+        throw error;
       }
-      throw error;
     }
+
+    throw lastError || new Error("All models failed");
   }
 
   /**
-   * runs the "Agent Loop":
-   * 1. Send user message to model.
-   * 2. Model decides: Text OR ToolCall.
-   * 3. If ToolCall -> Execute Tool -> Send result back to model -> Goto 2.
-   * 4. If Text -> Return final response.
+   * runs the "Agent Loop"
    */
   async runConversation(
     userMessage: string, 
@@ -125,7 +136,6 @@ export class StockAgent {
   ): Promise<Message[]> {
     const newMessages: Message[] = [];
     
-    // 1. Add User Message to History
     this.history.push({
       role: 'user',
       parts: [{ text: userMessage }]
@@ -133,7 +143,7 @@ export class StockAgent {
 
     let turnComplete = false;
     let iteration = 0;
-    const MAX_ITERATIONS = 5; // Prevent infinite loops
+    const MAX_ITERATIONS = 5;
 
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -144,8 +154,8 @@ export class StockAgent {
       onStatusUpdate(iteration === 1 ? 'thinking' : 'analyzing_tool_data');
 
       try {
-        // 2. Call Gemini with Retry
-        const result = await this.generateContentWithRetry(
+        // Use the Fallback Mechanism
+        const { response: result, modelUsed } = await this.generateContentWithFallback(
           this.history,
           [{ functionDeclarations: [getStockDataFunctionDeclaration] }],
           `你是一个专业的金融分析智能体。
@@ -164,7 +174,6 @@ export class StockAgent {
           throw new Error("No content received from model");
         }
 
-        // Add model turn to history
         this.history.push(responseContent);
 
         const parts = responseContent.parts || [];
@@ -176,7 +185,6 @@ export class StockAgent {
            const functionResponsesParts: Part[] = [];
            const toolResultsForUI: StockToolResult[] = [];
 
-           // Execute all requested tools
            for (const call of toolCalls) {
              if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -189,13 +197,9 @@ export class StockAgent {
              console.log(`[Agent] Calling Tool: ${fnName}`, fnArgs);
 
              if (toolsImplementation[fnName]) {
-               // Execute local function
                const toolResult = await toolsImplementation[fnName](fnArgs.symbol);
-               
-               // Store for UI rendering (Side Effect)
                toolResultsForUI.push(toolResult);
 
-               // Create API response part
                functionResponsesParts.push({
                  functionResponse: {
                    name: fnName,
@@ -206,38 +210,33 @@ export class StockAgent {
              }
            }
 
-           // Add Tool Response to History
-           // We need to append the function response to the history specifically so the model sees it in the next loop.
-           this.history[this.history.length - 1] = responseContent; // Ensure the toolCall is saved in history
+           this.history[this.history.length - 1] = responseContent; 
            
            this.history.push({
              parts: functionResponsesParts
            });
 
-           // Add an intermediate message to UI if needed
            if (toolResultsForUI.length > 0) {
              newMessages.push({
                id: Date.now().toString() + '-tool',
                role: Role.TOOL,
                content: `已获取 ${toolResultsForUI.map(t => t.symbol).join(', ')} 的数据`,
-               stockData: toolResultsForUI, // Pass all results for comparison
-               shouldAnimate: false // Tool messages are usually just updates, no need to type
+               stockData: toolResultsForUI, 
+               shouldAnimate: false 
              });
            }
 
         } else {
-          // No tools called, this is the final answer
           turnComplete = true;
           newMessages.push({
             id: Date.now().toString(),
             role: Role.MODEL,
             content: textParts || "我已处理该请求。",
-            shouldAnimate: true // Enable typewriter effect for the final answer
+            shouldAnimate: true 
           });
         }
 
       } catch (error: any) {
-        // Rethrow AbortError to be handled by the caller (App.tsx)
         if (error.name === 'AbortError') throw error;
 
         console.error("Agent Error:", error);
@@ -245,12 +244,13 @@ export class StockAgent {
         
         let errorMessage = "处理您的请求时遇到错误。";
         
+        // More descriptive error messages based on fallback failure
         if (error.status === 429 || (error.message && error.message.includes('429'))) {
-          errorMessage = "API 请求过于频繁（429）。目前使用的是免费配额，请稍后重试。";
+          errorMessage = "所有可用模型的免费配额均已耗尽。请稍后再试（Gemini 2.0 & 1.5）。";
         } else if (error.message && error.message.includes('quota')) {
-          errorMessage = "API 配额已耗尽。请检查您的 Google AI Studio 账单设置或稍后重试。";
-        } else if (error.status === 404 || (error.message && error.message.includes('404'))) {
-          errorMessage = "找不到指定的模型。请联系开发者更新模型配置。";
+          errorMessage = "API 配额已耗尽。请稍后再试。";
+        } else if (error.status === 404) {
+          errorMessage = "配置的模型不可用。";
         }
 
         newMessages.push({

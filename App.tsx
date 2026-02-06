@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Message, Role, ChatSession } from './types';
 import { StockAgent } from './services/agent';
 import ChatMessage, { ChatMessageRef } from './components/ChatMessage';
-import { Send, Activity, Sparkles, TrendingUp, Menu, Plus, MessageSquare, Trash2, X, Square } from 'lucide-react';
+import { Send, Activity, Sparkles, TrendingUp, Menu, Plus, MessageSquare, Trash2, X, Square, ShieldCheck } from 'lucide-react';
 
 const agent = new StockAgent();
 
@@ -394,8 +394,8 @@ const App: React.FC = () => {
               <h1 className="text-xl font-bold tracking-tight text-white hidden md:block">股市助手</h1>
               <h1 className="text-lg font-bold tracking-tight text-white md:hidden">股市助手</h1>
               <p className="text-xs text-slate-400 flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Gemini 2.0 Flash
+                <ShieldCheck size={12} className="text-emerald-500" />
+                Gemini Auto (2.0 / 1.5)
               </p>
             </div>
           </div>
