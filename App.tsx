@@ -70,7 +70,7 @@ const App: React.FC = () => {
             <TrendingUp className="text-white" size={24} />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white">Gemini 股市助手</h1>
+            <h1 className="text-xl font-bold tracking-tight text-white">股市助手</h1>
             <p className="text-xs text-slate-400 flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               基于 Gemini 3.0 Pro
@@ -129,7 +129,7 @@ const App: React.FC = () => {
           </form>
           <div className="text-center mt-2">
             <p className="text-[10px] text-slate-500">
-              AI生成的内容可能不准确。市场数据仅为演示模拟。
+              AI生成的内容仅供参考。
             </p>
           </div>
         </div>

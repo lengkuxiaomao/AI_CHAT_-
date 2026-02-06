@@ -102,7 +102,7 @@ const StockChart: React.FC<StockChartProps> = ({ data }) => {
               domain={['auto', 'auto']}
               tick={{ fontSize: 10 }}
               tickFormatter={(val) => `$${val}`}
-              width={30}
+              width={25}
             />
             <Tooltip 
               contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f1f5f9' }}
